@@ -194,4 +194,7 @@ async def roll(ctx, sides: int = 6):
 async def fact(ctx):
     """Sends a random fact."""
     try:
-        response = requests.get("https://uselessfacts.jsph.pl/
+        response = requests.get("https://uselessfacts.jsph.pl/random.json?language=en")
+        response.raise_for_status()
+        data = response.json()
+        await ctx.send(data["text"])
