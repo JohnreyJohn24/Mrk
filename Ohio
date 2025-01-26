@@ -1,200 +1,197 @@
 import discord
 from discord.ext import commands
-from discord.utils import get
-from dotenv import load_dotenv
-import os
-import asyncio
 import random
+import asyncio
+import datetime
+import wikipedia
+import requests
+import json
+from bs4 import BeautifulSoup
 import time
+import aiohttp
+import os
+from dotenv import load_dotenv
 
+# Load environment variables (recommended)
 load_dotenv()
-TOKEN = os.getenv('TOKEN') 
+TOKEN = os.getenv('DISCORD_TOKEN')  # Get token from environment variable
 
 intents = discord.Intents.default()
-intents.members = True 
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-bot = commands.Bot(command_prefix='!', intents=intents)
-
-# Define admin roles
-admin_roles = ['Admin', 'Moderator']  # Add more roles as needed
-
-# Check if the user has the required role
-def is_admin(ctx):
-    author = ctx.author
-    for role in author.roles:
-        if role.name in admin_roles:
-            return True
-    return False
-
-# Create a check decorator
-def has_admin_role():
-    async def predicate(ctx):
-        return await is_admin(ctx)
-    return commands.check(predicate)
-
-@bot.event
-async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    await bot.change_presence(activity=discord.Game(name="Your Bot Name")) 
+# --- Utility Commands ---
 
 @bot.command()
 async def ping(ctx):
-    """Sends a Pong! message in response to the ping command."""
-    await ctx.send('Pong!')
+    """Responds with 'Pong!'"""
+    await ctx.send(f"Pong! Latency: {round(bot.latency * 1000)}ms")
 
 @bot.command()
-@has_admin_role()
-async def clear(ctx, amount=5):
-    """Clears a specified number of messages from the channel."""
-    await ctx.channel.purge(limit=amount + 1)
+async def invite(ctx):
+    """Gets the bot's invite link."""
+    await ctx.send(f"Invite me to your server: https://discord.com/api/oauth2/authorize?client_id={bot.user.id}&permissions=8&scope=bot")
 
 @bot.command()
-@has_admin_role()
-async def purge(ctx, amount: int):
-    """Purges a specified number of messages from the channel."""
-    await ctx.channel.purge(limit=amount)
+async def uptime(ctx):
+    """Shows how long the bot has been online."""
+    uptime = str(datetime.datetime.now() - bot.uptime)
+    await ctx.send(f"I've been online for {uptime}")
 
 @bot.command()
-@has_admin_role()
+async def help(ctx, command=None):
+    """Shows help information for commands."""
+    if command is None:
+        help_text = "**Available Commands:**\n"
+        for cmd in bot.commands:
+            help_text += f" - `{cmd.name}`: {cmd.help}\n"
+        await ctx.send(help_text)
+    else:
+        cmd = bot.get_command(command)
+        if cmd is not None:
+            await ctx.send(f"**Help for `{cmd.name}`:**\n{cmd.help}")
+        else:
+            await ctx.send(f"Command `{command}` not found.")
+
+# --- Moderation Commands ---
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason=None):
     """Kicks a member from the server."""
     await member.kick(reason=reason)
-    await ctx.send(f'{member.name} has been kicked.')
+    await ctx.send(f"{member.mention} was kicked.")
 
 @bot.command()
-@has_admin_role()
+@commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason=None):
     """Bans a member from the server."""
     await member.ban(reason=reason)
-    await ctx.send(f'{member.name} has been banned.')
+    await ctx.send(f"{member.mention} was banned.")
 
 @bot.command()
-@has_admin_role()
-async def unban(ctx, *, member):
-    """Unbans a previously banned member."""
-    banned_users = await ctx.guild.bans()
-    member_name, member_discriminator = member.split('#')
-
-    for ban_entry in banned_users:
-        user = ban_entry.user
-
-        if (user.name, user.discriminator) == (member_name, member_discriminator):
-            await ctx.guild.unban(user)
-            await ctx.send(f'{user.name} has been unbanned.')
-            return
-
-    await ctx.send(f'User {member} not found.')
+@commands.has_permissions(unban_members=True)
+async def unban(ctx, user: discord.User):
+    """Unbans a user from the server."""
+    await ctx.guild.unban(user)
+    await ctx.send(f"{user.mention} was unbanned.")
 
 @bot.command()
-async def say(ctx, *, message):
-    """Makes the bot say something."""
-    await ctx.send(message)
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount=5):
+    """Clears a specified number of messages."""
+    await ctx.channel.purge(limit=amount + 1)
 
 @bot.command()
-async def info(ctx):
-    """Displays information about the bot."""
-    embed = discord.Embed(title="Bot Information", color=0x00ff00)
-    embed.add_field(name="Bot Name", value=bot.user.name, inline=True)
-    embed.add_field(name="Bot ID", value=bot.user.id, inline=True)
-    embed.add_field(name="Created At", value=bot.user.created_at.strftime("%d/%m/%Y"), inline=True)
-    await ctx.send(embed=embed)
+@commands.has_permissions(manage_messages=True)
+async def slowmode(ctx, seconds: int):
+    """Sets the slowmode for the current channel."""
+    await ctx.channel.edit(slowmode_delay=seconds)
+    await ctx.send(f"Slowmode set to {seconds} seconds.")
 
 @bot.command()
-async def serverinfo(ctx):
-    """Displays information about the server."""
-    guild = ctx.guild
+@commands.has_permissions(manage_guild=True)
+async def setprefix(ctx, new_prefix):
+    """Sets a new command prefix for the bot."""
+    # Store prefix in database or config file
+    bot.command_prefix = new_prefix
+    await ctx.send(f"Command prefix set to '{new_prefix}'.")
 
-    embed = discord.Embed(title=f"{guild.name}", description=f"Server ID: {guild.id}", color=guild.get_member(bot.user.id).color)
-    embed.add_field(name="Owner", value=guild.owner, inline=True)
-    embed.add_field(name="Region", value=guild.region, inline=True)
-    embed.add_field(name="Member Count", value=guild.member_count, inline=True)
-    embed.add_field(name="Created At", value=guild.created_at.strftime("%d/%m/%Y"), inline=True)
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def lockdown(ctx):
+    """Locks down the current channel."""
+    overwrite = ctx.channel.overwrites_for(ctx.guild.default_role)
+    overwrite.send_messages = False
+    await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+    await ctx.send("Channel locked down.")
 
-    if guild.icon:
-        embed.set_thumbnail(url=guild.icon.url)
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def unlock(ctx):
+    """Unlocks the current channel."""
+    overwrite = ctx.channel.overwrites_for(ctx.guild.default_role)
+    overwrite.send_messages = None
+    await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrite)
+    await ctx.send("Channel unlocked.")
 
-    await ctx.send(embed=embed)
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def mute(ctx, member: discord.Member, *, reason=None):
+    """Mutes a member in the server."""
+    mute_role = discord.utils.get(ctx.guild.roles, name="Muted") 
+    if not mute_role:
+        mute_role = await ctx.guild.create_role(name="Muted")
+        for channel in ctx.guild.channels:
+            await channel.set_permissions(mute_role, speak=False, send_messages=False, read_message_history=True)
+
+    await member.add_roles(mute_role, reason=reason)
+    await ctx.send(f"{member.mention} was muted.")
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def unmute(ctx, member: discord.Member):
+    """Unmutes a member in the server."""
+    mute_role = discord.utils.get(ctx.guild.roles, name="Muted")
+    await member.remove_roles(mute_role)
+    await ctx.send(f"{member.mention} was unmuted.")
+
+# --- Fun Commands ---
 
 @bot.command()
 async def choose(ctx, *choices: str):
-    """Chooses a random option from the given choices."""
-    if len(choices) < 2:
-        await ctx.send("You need to provide at least two options.")
-    else:
-        await ctx.send(f"I choose: {random.choice(choices)}")
+    """Chooses a random option from a list."""
+    await ctx.send(f"I choose: {random.choice(choices)}")
 
 @bot.command()
-async def roll(ctx, dice: str = '1d6'):
-    """Rolls a dice in NdN format (e.g., 2d10, 1d20)."""
+async def 8ball(ctx, *, question):
+    """Answers a yes/no question with a random 8ball response."""
+    responses = [
+        "It is certain.", "It is decidedly so.", "Without a doubt.", 
+        "Yes - definitely.", "You may rely on it.", "As I see it, yes.", 
+        "Most likely.", "Outlook good.", "Yes.", "Signs point to yes.", 
+        "Reply hazy, try again.", "Ask again later.", "Better not tell you now.", 
+        "Cannot predict now.", "Concentrate and ask again.", 
+        "Don't count on it.", "My reply is no.", "My sources say no.", 
+        "Outlook not so good.", "Very doubtful."
+    ]
+    await ctx.send(f"Question: {question}\nAnswer: {random.choice(responses)}")
+
+@bot.command()
+async def joke(ctx):
+    """Tells a random joke."""
     try:
-        rolls, limit = map(int, dice.split('d'))
-    except ValueError:
-        await ctx.send("Format has to be in NdN!")
-        return
-
-    result = ', '.join(str(random.randint(1, limit)) for _ in range(rolls))
-    await ctx.send(result)
-
-@bot.command()
-@has_admin_role()
-async def mute(ctx, member: discord.Member, time: int, reason=None):
-    """Mutes a member for a specified time (in seconds)."""
-    guild = ctx.guild
-    muted_role = discord.utils.get(guild.roles, name="Muted")
-
-    if muted_role is None:
-        await ctx.send("Muted role not found. Please create a role named 'Muted' and give it appropriate permissions.")
-        return
-
-    await member.add_roles(muted_role, reason=reason)
-    await ctx.send(f"{member.mention} has been muted for {time} seconds.")
-
-    await asyncio.sleep(time)
-    await member.remove_roles(muted_role)
-    await ctx.send(f"{member.mention} has been unmuted.")
+        response = requests.get("https://some-random-api.ml/joke")
+        response.raise_for_status()
+        data = response.json()
+        await ctx.send(f"{data['setup']}\n{data['punch_line']}")
+    except:
+        await ctx.send("I couldn't find a joke right now.")
 
 @bot.command()
-@has_admin_role()
-async def warn(ctx, member: discord.Member, *, reason=None):
-    """Warns a member."""
-    await ctx.send(f"{member.mention} has been warned. Reason: {reason}")
-    # You can implement a warning system here, such as storing warnings in a database.
+async def meme(ctx):
+    """Sends a random meme."""
+    try:
+        response = requests.get("https://meme-api.herokuapp.com/gimme")
+        response.raise_for_status()
+        data = response.json()
+        await ctx.send(data['url'])
+    except:
+        await ctx.send("I couldn't find a meme right now.")
 
 @bot.command()
-@has_admin_role()
-async def modstat(ctx, member: discord.Member = None):
-    """
-    Displays moderation status of a member.
-    If no member is specified, displays the bot's moderation status.
-    """
-    if member is None:
-        await ctx.send("Moderation status: Online and ready!")
-    else:
-        # You can add logic here to check for active mutes, warnings, etc.
-        # for the specified member. For example:
-        # if member.roles and "Muted" in [role.name for role in member.roles]:
-        #     await ctx.send(f"{member.name} is currently muted.")
-        # else:
-        #     await ctx.send(f"{member.name} is currently muted.")
-        await ctx.send(f"Moderation status for {member.name}: Not implemented yet.")
+async def coinflip(ctx):
+    """Flips a coin."""
+    coin_sides = ["Heads", "Tails"]
+    await ctx.send(f"You flipped a {random.choice(coin_sides)}.")
 
 @bot.command()
-async def avatar(ctx, member: discord.Member = None):
-    """Displays the avatar of the specified member or yourself."""
-    if member is None:
-        member = ctx.author
-    await ctx.send(member.avatar.url)
+async def roll(ctx, sides: int = 6):
+    """Rolls a dice with the specified number of sides."""
+    await ctx.send(f"You rolled a {random.randint(1, sides)}")
 
 @bot.command()
-async def userinfo(ctx, member: discord.Member = None):
-    """Displays information about the specified member or yourself."""
-    if member is None:
-        member = ctx.author
-
-    embed = discord.Embed(title=f"{member.name}#{member.discriminator}", color=member.color)
-    embed.set_thumbnail(url=member.avatar.url)
-    embed.add_field(name="ID", value=member.id, inline=True)
-    embed.add_field(name="Status", value=member.status, inline=True)
-    embed.add_field(name="Joined Server", value=member.joined_at.strftime("%d/%m/%Y"), inline=True)
-    embed.add_field(name="Created At", value=member.created_at.strftime("%d/%m/%Y"), inline=True)
-    embed.add_field(name="Roles", value=', '.
+async def fact(ctx):
+    """Sends a random fact."""
+    try:
+        response = requests.get("https://uselessfacts.jsph.pl/
