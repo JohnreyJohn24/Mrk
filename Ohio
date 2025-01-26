@@ -1,0 +1,200 @@
+import discord
+from discord.ext import commands
+from discord.utils import get
+from dotenv import load_dotenv
+import os
+import asyncio
+import random
+import time
+
+load_dotenv()
+TOKEN = os.getenv('TOKEN') 
+
+intents = discord.Intents.default()
+intents.members = True 
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Define admin roles
+admin_roles = ['Admin', 'Moderator']  # Add more roles as needed
+
+# Check if the user has the required role
+def is_admin(ctx):
+    author = ctx.author
+    for role in author.roles:
+        if role.name in admin_roles:
+            return True
+    return False
+
+# Create a check decorator
+def has_admin_role():
+    async def predicate(ctx):
+        return await is_admin(ctx)
+    return commands.check(predicate)
+
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+    await bot.change_presence(activity=discord.Game(name="Your Bot Name")) 
+
+@bot.command()
+async def ping(ctx):
+    """Sends a Pong! message in response to the ping command."""
+    await ctx.send('Pong!')
+
+@bot.command()
+@has_admin_role()
+async def clear(ctx, amount=5):
+    """Clears a specified number of messages from the channel."""
+    await ctx.channel.purge(limit=amount + 1)
+
+@bot.command()
+@has_admin_role()
+async def purge(ctx, amount: int):
+    """Purges a specified number of messages from the channel."""
+    await ctx.channel.purge(limit=amount)
+
+@bot.command()
+@has_admin_role()
+async def kick(ctx, member: discord.Member, *, reason=None):
+    """Kicks a member from the server."""
+    await member.kick(reason=reason)
+    await ctx.send(f'{member.name} has been kicked.')
+
+@bot.command()
+@has_admin_role()
+async def ban(ctx, member: discord.Member, *, reason=None):
+    """Bans a member from the server."""
+    await member.ban(reason=reason)
+    await ctx.send(f'{member.name} has been banned.')
+
+@bot.command()
+@has_admin_role()
+async def unban(ctx, *, member):
+    """Unbans a previously banned member."""
+    banned_users = await ctx.guild.bans()
+    member_name, member_discriminator = member.split('#')
+
+    for ban_entry in banned_users:
+        user = ban_entry.user
+
+        if (user.name, user.discriminator) == (member_name, member_discriminator):
+            await ctx.guild.unban(user)
+            await ctx.send(f'{user.name} has been unbanned.')
+            return
+
+    await ctx.send(f'User {member} not found.')
+
+@bot.command()
+async def say(ctx, *, message):
+    """Makes the bot say something."""
+    await ctx.send(message)
+
+@bot.command()
+async def info(ctx):
+    """Displays information about the bot."""
+    embed = discord.Embed(title="Bot Information", color=0x00ff00)
+    embed.add_field(name="Bot Name", value=bot.user.name, inline=True)
+    embed.add_field(name="Bot ID", value=bot.user.id, inline=True)
+    embed.add_field(name="Created At", value=bot.user.created_at.strftime("%d/%m/%Y"), inline=True)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def serverinfo(ctx):
+    """Displays information about the server."""
+    guild = ctx.guild
+
+    embed = discord.Embed(title=f"{guild.name}", description=f"Server ID: {guild.id}", color=guild.get_member(bot.user.id).color)
+    embed.add_field(name="Owner", value=guild.owner, inline=True)
+    embed.add_field(name="Region", value=guild.region, inline=True)
+    embed.add_field(name="Member Count", value=guild.member_count, inline=True)
+    embed.add_field(name="Created At", value=guild.created_at.strftime("%d/%m/%Y"), inline=True)
+
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def choose(ctx, *choices: str):
+    """Chooses a random option from the given choices."""
+    if len(choices) < 2:
+        await ctx.send("You need to provide at least two options.")
+    else:
+        await ctx.send(f"I choose: {random.choice(choices)}")
+
+@bot.command()
+async def roll(ctx, dice: str = '1d6'):
+    """Rolls a dice in NdN format (e.g., 2d10, 1d20)."""
+    try:
+        rolls, limit = map(int, dice.split('d'))
+    except ValueError:
+        await ctx.send("Format has to be in NdN!")
+        return
+
+    result = ', '.join(str(random.randint(1, limit)) for _ in range(rolls))
+    await ctx.send(result)
+
+@bot.command()
+@has_admin_role()
+async def mute(ctx, member: discord.Member, time: int, reason=None):
+    """Mutes a member for a specified time (in seconds)."""
+    guild = ctx.guild
+    muted_role = discord.utils.get(guild.roles, name="Muted")
+
+    if muted_role is None:
+        await ctx.send("Muted role not found. Please create a role named 'Muted' and give it appropriate permissions.")
+        return
+
+    await member.add_roles(muted_role, reason=reason)
+    await ctx.send(f"{member.mention} has been muted for {time} seconds.")
+
+    await asyncio.sleep(time)
+    await member.remove_roles(muted_role)
+    await ctx.send(f"{member.mention} has been unmuted.")
+
+@bot.command()
+@has_admin_role()
+async def warn(ctx, member: discord.Member, *, reason=None):
+    """Warns a member."""
+    await ctx.send(f"{member.mention} has been warned. Reason: {reason}")
+    # You can implement a warning system here, such as storing warnings in a database.
+
+@bot.command()
+@has_admin_role()
+async def modstat(ctx, member: discord.Member = None):
+    """
+    Displays moderation status of a member.
+    If no member is specified, displays the bot's moderation status.
+    """
+    if member is None:
+        await ctx.send("Moderation status: Online and ready!")
+    else:
+        # You can add logic here to check for active mutes, warnings, etc.
+        # for the specified member. For example:
+        # if member.roles and "Muted" in [role.name for role in member.roles]:
+        #     await ctx.send(f"{member.name} is currently muted.")
+        # else:
+        #     await ctx.send(f"{member.name} is currently muted.")
+        await ctx.send(f"Moderation status for {member.name}: Not implemented yet.")
+
+@bot.command()
+async def avatar(ctx, member: discord.Member = None):
+    """Displays the avatar of the specified member or yourself."""
+    if member is None:
+        member = ctx.author
+    await ctx.send(member.avatar.url)
+
+@bot.command()
+async def userinfo(ctx, member: discord.Member = None):
+    """Displays information about the specified member or yourself."""
+    if member is None:
+        member = ctx.author
+
+    embed = discord.Embed(title=f"{member.name}#{member.discriminator}", color=member.color)
+    embed.set_thumbnail(url=member.avatar.url)
+    embed.add_field(name="ID", value=member.id, inline=True)
+    embed.add_field(name="Status", value=member.status, inline=True)
+    embed.add_field(name="Joined Server", value=member.joined_at.strftime("%d/%m/%Y"), inline=True)
+    embed.add_field(name="Created At", value=member.created_at.strftime("%d/%m/%Y"), inline=True)
+    embed.add_field(name="Roles", value=', '.
